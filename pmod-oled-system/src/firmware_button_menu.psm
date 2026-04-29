@@ -1,0 +1,678 @@
+; Heart Rate Measurement with OLED Display and Waveform
+; Characters embedded directly - no charLib ROM needed
+;
+; Port Map:
+;   Output 0x00 = SPI data byte
+;   Output 0x01 = Control (bit0=SPI_EN, bit1=DC)
+;   Output 0x02 = LED[7:0]
+;   Output 0x03 = LED[15:8]
+;   Input  0x00 = XADC high byte
+;   Input  0x01 = XADC low byte
+;   Input  0x02 = Status (bit0=SPI_FIN, bit1=init_ready)
+;   Input  0x03 = Timer (ms counter, 8-bit wrap)
+
+CONSTANT PORT_SPI_DATA, 00
+CONSTANT PORT_CTRL, 01
+CONSTANT PORT_LED_LO, 02
+CONSTANT PORT_LED_HI, 03
+
+CONSTANT PORT_XADC_HI, 00
+CONSTANT PORT_XADC_LO, 01
+CONSTANT PORT_STATUS, 02
+CONSTANT PORT_TIMER, 03
+
+CONSTANT CTRL_SPI_EN, 01
+CONSTANT CTRL_DATA, 02
+CONSTANT CTRL_CMD, 00
+
+CONSTANT PULSE_THRESH, 80
+
+; Scratchpad: 0x00=col_ptr, 0x02=pulse_state, 0x05-07=BPM digits
+; 0x0B-0C=ms_elapsed, 0x0D=last_timer, 0x0E=DC_state
+
+; ==================== Entry Point ====================
+start:
+wait_init:
+    INPUT s0, PORT_STATUS
+    TEST s0, 02
+    JUMP Z, wait_init
+
+    ; Initialize scratchpad
+    LOAD s0, 00
+    STORE s0, 00
+    STORE s0, 02
+    STORE s0, 05
+    STORE s0, 08
+    STORE s0, 09
+    STORE s0, 0A
+    STORE s0, 0B
+    STORE s0, 0C
+    STORE s0, 0E
+    LOAD s0, 07
+    STORE s0, 06
+    LOAD s0, 02
+    STORE s0, 07
+    INPUT s0, PORT_TIMER
+    STORE s0, 0D
+
+    CALL clear_screen
+    CALL display_hr_label
+
+; ==================== Main Loop ====================
+main_loop:
+    INPUT s5, PORT_XADC_HI
+
+    OUTPUT s5, PORT_LED_LO
+
+    ; Update ms elapsed
+    INPUT s0, PORT_TIMER
+    FETCH s1, 0D
+    STORE s0, 0D
+    SUB s0, s1
+    FETCH s1, 0B
+    ADD s1, s0
+    STORE s1, 0B
+    FETCH s1, 0C
+    ADDCY s1, 00
+    STORE s1, 0C
+
+    ; Pulse edge detection
+    FETCH s1, 02
+    LOAD s2, 00
+    COMPARE s5, PULSE_THRESH
+    JUMP C, below_thresh
+    LOAD s2, 01
+below_thresh:
+    STORE s2, 02
+
+    COMPARE s1, 00
+    JUMP NZ, no_rising_edge
+    COMPARE s2, 01
+    JUMP NZ, no_rising_edge
+
+    ; Rising edge - heartbeat detected
+    FETCH s3, 0B
+    FETCH s4, 0C
+
+    ; Only calculate if period >= 256ms (filters noise between beats)
+    ; High byte must be > 0, meaning period is at least 256ms
+    ; 256ms = ~234 BPM max, well above any real heart rate
+    COMPARE s4, 00
+    JUMP Z, skip_bpm_calc
+
+    CALL calc_bpm
+
+skip_bpm_calc:
+    LOAD s0, 00
+    STORE s0, 0B
+    STORE s0, 0C
+    CALL display_hr_value
+
+no_rising_edge:
+
+    ; --- Draw Waveform ---
+    LOAD s0, s5
+    SR0 s0
+    SR0 s0
+    SR0 s0
+    LOAD s1, 1F
+    SUB s1, s0
+
+    LOAD s2, s1
+    SR0 s2
+    SR0 s2
+    SR0 s2
+    LOAD s3, s1
+    AND s3, 07
+
+    LOAD s4, 01
+    COMPARE s3, 00
+    JUMP Z, bit_done
+    LOAD s6, s3
+shift_bit:
+    SL0 s4
+    SUB s6, 01
+    JUMP NZ, shift_bit
+bit_done:
+
+    FETCH s7, 00
+    LOAD s8, 00
+
+draw_pages:
+    LOAD s0, s8
+    ADD s0, 01
+    CALL set_page_col
+
+    LOAD s0, CTRL_DATA
+    OUTPUT s0, PORT_CTRL
+    STORE s0, 0E
+
+    COMPARE s8, s2
+    JUMP NZ, send_blank
+    LOAD s0, s4
+    JUMP send_wave_byte
+send_blank:
+    LOAD s0, 00
+send_wave_byte:
+    CALL spi_send_byte
+
+    ADD s8, 01
+    COMPARE s8, 03
+    JUMP NZ, draw_pages
+
+    FETCH s7, 00
+    ADD s7, 01
+    COMPARE s7, 80
+    JUMP NZ, no_col_wrap
+    LOAD s7, 00
+no_col_wrap:
+    STORE s7, 00
+
+    CALL short_delay
+    JUMP main_loop
+
+; ==================== BPM Calculation ====================
+calc_bpm:
+    LOAD sA, EA
+    LOAD s9, 60
+    LOAD sB, 00
+div_loop:
+    COMPARE sA, s4
+    JUMP C, div_less
+    JUMP NZ, div_sub
+    COMPARE s9, s3
+    JUMP C, div_less
+div_sub:
+    SUB s9, s3
+    SUBCY sA, s4
+    ADD sB, 01
+    COMPARE sB, FF
+    JUMP Z, div_done
+    JUMP div_loop
+div_less:
+div_done:
+    LOAD sC, 00
+hund_loop:
+    COMPARE sB, 64
+    JUMP C, hund_done
+    SUB sB, 64
+    ADD sC, 01
+    JUMP hund_loop
+hund_done:
+    STORE sC, 05
+    LOAD sC, 00
+tens_loop:
+    COMPARE sB, 0A
+    JUMP C, tens_done
+    SUB sB, 0A
+    ADD sC, 01
+    JUMP tens_loop
+tens_done:
+    STORE sC, 06
+    STORE sB, 07
+    RETURN
+
+; ==================== Display Subroutines ====================
+
+clear_screen:
+    LOAD s8, 00
+clear_page:
+    LOAD s0, s8
+    LOAD s7, 00
+    CALL set_page_col
+    LOAD s0, CTRL_DATA
+    OUTPUT s0, PORT_CTRL
+    STORE s0, 0E
+    LOAD s9, 00
+clear_col:
+    LOAD s0, 00
+    CALL spi_send_byte
+    ADD s9, 01
+    COMPARE s9, 80
+    JUMP NZ, clear_col
+    ADD s8, 01
+    COMPARE s8, 04
+    JUMP NZ, clear_page
+    RETURN
+
+display_hr_label:
+    LOAD s0, 00
+    LOAD s7, 00
+    CALL set_page_col
+    LOAD s0, CTRL_DATA
+    OUTPUT s0, PORT_CTRL
+    STORE s0, 0E
+    CALL send_H
+    CALL send_R
+    CALL send_colon
+    CALL send_space
+    RETURN
+
+display_hr_value:
+    LOAD s0, 00
+    LOAD s7, 20
+    CALL set_page_col
+    LOAD s0, CTRL_DATA
+    OUTPUT s0, PORT_CTRL
+    STORE s0, 0E
+    ; Hundreds
+    FETCH s0, 05
+    COMPARE s0, 00
+    JUMP NZ, show_hund
+    CALL send_space
+    JUMP do_tens
+show_hund:
+    CALL send_digit
+do_tens:
+    FETCH s0, 06
+    CALL send_digit
+    FETCH s0, 07
+    CALL send_digit
+    CALL send_space
+    CALL send_B
+    CALL send_P
+    CALL send_M
+    CALL send_space
+    RETURN
+
+; ==================== Digit Dispatch ====================
+; Input: s0 = digit 0-9
+send_digit:
+    COMPARE s0, 00
+    JUMP Z, send_0
+    COMPARE s0, 01
+    JUMP Z, send_1
+    COMPARE s0, 02
+    JUMP Z, send_2
+    COMPARE s0, 03
+    JUMP Z, send_3
+    COMPARE s0, 04
+    JUMP Z, send_4
+    COMPARE s0, 05
+    JUMP Z, send_5
+    COMPARE s0, 06
+    JUMP Z, send_6
+    COMPARE s0, 07
+    JUMP Z, send_7
+    COMPARE s0, 08
+    JUMP Z, send_8
+    COMPARE s0, 09
+    JUMP Z, send_9
+    JUMP send_space
+
+; ==================== Character Bitmap Subroutines ====================
+
+send_space:
+    LOAD s0, 00
+    CALL spi_send_byte
+    LOAD s0, 00
+    CALL spi_send_byte
+    LOAD s0, 00
+    CALL spi_send_byte
+    LOAD s0, 00
+    CALL spi_send_byte
+    LOAD s0, 00
+    CALL spi_send_byte
+    LOAD s0, 00
+    CALL spi_send_byte
+    LOAD s0, 00
+    CALL spi_send_byte
+    LOAD s0, 00
+    CALL spi_send_byte
+    RETURN
+
+send_H:
+    LOAD s0, 41
+    CALL spi_send_byte
+    LOAD s0, 7F
+    CALL spi_send_byte
+    LOAD s0, 08
+    CALL spi_send_byte
+    LOAD s0, 08
+    CALL spi_send_byte
+    LOAD s0, 08
+    CALL spi_send_byte
+    LOAD s0, 7F
+    CALL spi_send_byte
+    LOAD s0, 41
+    CALL spi_send_byte
+    LOAD s0, 00
+    CALL spi_send_byte
+    RETURN
+
+send_R:
+    LOAD s0, 41
+    CALL spi_send_byte
+    LOAD s0, 7F
+    CALL spi_send_byte
+    LOAD s0, 09
+    CALL spi_send_byte
+    LOAD s0, 09
+    CALL spi_send_byte
+    LOAD s0, 19
+    CALL spi_send_byte
+    LOAD s0, 69
+    CALL spi_send_byte
+    LOAD s0, 46
+    CALL spi_send_byte
+    LOAD s0, 00
+    CALL spi_send_byte
+    RETURN
+
+send_colon:
+    LOAD s0, 00
+    CALL spi_send_byte
+    LOAD s0, 00
+    CALL spi_send_byte
+    LOAD s0, 00
+    CALL spi_send_byte
+    LOAD s0, 12
+    CALL spi_send_byte
+    LOAD s0, 00
+    CALL spi_send_byte
+    LOAD s0, 00
+    CALL spi_send_byte
+    LOAD s0, 00
+    CALL spi_send_byte
+    LOAD s0, 00
+    CALL spi_send_byte
+    RETURN
+
+send_B:
+    LOAD s0, 41
+    CALL spi_send_byte
+    LOAD s0, 7F
+    CALL spi_send_byte
+    LOAD s0, 49
+    CALL spi_send_byte
+    LOAD s0, 49
+    CALL spi_send_byte
+    LOAD s0, 49
+    CALL spi_send_byte
+    LOAD s0, 49
+    CALL spi_send_byte
+    LOAD s0, 36
+    CALL spi_send_byte
+    LOAD s0, 00
+    CALL spi_send_byte
+    RETURN
+
+send_P:
+    LOAD s0, 41
+    CALL spi_send_byte
+    LOAD s0, 7F
+    CALL spi_send_byte
+    LOAD s0, 49
+    CALL spi_send_byte
+    LOAD s0, 09
+    CALL spi_send_byte
+    LOAD s0, 09
+    CALL spi_send_byte
+    LOAD s0, 09
+    CALL spi_send_byte
+    LOAD s0, 06
+    CALL spi_send_byte
+    LOAD s0, 00
+    CALL spi_send_byte
+    RETURN
+
+send_M:
+    LOAD s0, 41
+    CALL spi_send_byte
+    LOAD s0, 7F
+    CALL spi_send_byte
+    LOAD s0, 42
+    CALL spi_send_byte
+    LOAD s0, 0C
+    CALL spi_send_byte
+    LOAD s0, 42
+    CALL spi_send_byte
+    LOAD s0, 7F
+    CALL spi_send_byte
+    LOAD s0, 41
+    CALL spi_send_byte
+    LOAD s0, 00
+    CALL spi_send_byte
+    RETURN
+
+send_0:
+    LOAD s0, 00
+    CALL spi_send_byte
+    LOAD s0, 3E
+    CALL spi_send_byte
+    LOAD s0, 41
+    CALL spi_send_byte
+    LOAD s0, 41
+    CALL spi_send_byte
+    LOAD s0, 41
+    CALL spi_send_byte
+    LOAD s0, 3E
+    CALL spi_send_byte
+    LOAD s0, 00
+    CALL spi_send_byte
+    LOAD s0, 00
+    CALL spi_send_byte
+    RETURN
+
+send_1:
+    LOAD s0, 00
+    CALL spi_send_byte
+    LOAD s0, 00
+    CALL spi_send_byte
+    LOAD s0, 41
+    CALL spi_send_byte
+    LOAD s0, 7F
+    CALL spi_send_byte
+    LOAD s0, 40
+    CALL spi_send_byte
+    LOAD s0, 00
+    CALL spi_send_byte
+    LOAD s0, 00
+    CALL spi_send_byte
+    LOAD s0, 00
+    CALL spi_send_byte
+    RETURN
+
+send_2:
+    LOAD s0, 00
+    CALL spi_send_byte
+    LOAD s0, 42
+    CALL spi_send_byte
+    LOAD s0, 61
+    CALL spi_send_byte
+    LOAD s0, 51
+    CALL spi_send_byte
+    LOAD s0, 49
+    CALL spi_send_byte
+    LOAD s0, 6E
+    CALL spi_send_byte
+    LOAD s0, 00
+    CALL spi_send_byte
+    LOAD s0, 00
+    CALL spi_send_byte
+    RETURN
+
+send_3:
+    LOAD s0, 00
+    CALL spi_send_byte
+    LOAD s0, 22
+    CALL spi_send_byte
+    LOAD s0, 41
+    CALL spi_send_byte
+    LOAD s0, 49
+    CALL spi_send_byte
+    LOAD s0, 49
+    CALL spi_send_byte
+    LOAD s0, 36
+    CALL spi_send_byte
+    LOAD s0, 00
+    CALL spi_send_byte
+    LOAD s0, 00
+    CALL spi_send_byte
+    RETURN
+
+send_4:
+    LOAD s0, 00
+    CALL spi_send_byte
+    LOAD s0, 18
+    CALL spi_send_byte
+    LOAD s0, 14
+    CALL spi_send_byte
+    LOAD s0, 12
+    CALL spi_send_byte
+    LOAD s0, 7F
+    CALL spi_send_byte
+    LOAD s0, 10
+    CALL spi_send_byte
+    LOAD s0, 00
+    CALL spi_send_byte
+    LOAD s0, 00
+    CALL spi_send_byte
+    RETURN
+
+send_5:
+    LOAD s0, 00
+    CALL spi_send_byte
+    LOAD s0, 27
+    CALL spi_send_byte
+    LOAD s0, 49
+    CALL spi_send_byte
+    LOAD s0, 49
+    CALL spi_send_byte
+    LOAD s0, 49
+    CALL spi_send_byte
+    LOAD s0, 71
+    CALL spi_send_byte
+    LOAD s0, 00
+    CALL spi_send_byte
+    LOAD s0, 00
+    CALL spi_send_byte
+    RETURN
+
+send_6:
+    LOAD s0, 00
+    CALL spi_send_byte
+    LOAD s0, 3C
+    CALL spi_send_byte
+    LOAD s0, 4A
+    CALL spi_send_byte
+    LOAD s0, 49
+    CALL spi_send_byte
+    LOAD s0, 48
+    CALL spi_send_byte
+    LOAD s0, 70
+    CALL spi_send_byte
+    LOAD s0, 00
+    CALL spi_send_byte
+    LOAD s0, 00
+    CALL spi_send_byte
+    RETURN
+
+send_7:
+    LOAD s0, 00
+    CALL spi_send_byte
+    LOAD s0, 43
+    CALL spi_send_byte
+    LOAD s0, 21
+    CALL spi_send_byte
+    LOAD s0, 11
+    CALL spi_send_byte
+    LOAD s0, 0D
+    CALL spi_send_byte
+    LOAD s0, 03
+    CALL spi_send_byte
+    LOAD s0, 00
+    CALL spi_send_byte
+    LOAD s0, 00
+    CALL spi_send_byte
+    RETURN
+
+send_8:
+    LOAD s0, 00
+    CALL spi_send_byte
+    LOAD s0, 36
+    CALL spi_send_byte
+    LOAD s0, 49
+    CALL spi_send_byte
+    LOAD s0, 49
+    CALL spi_send_byte
+    LOAD s0, 49
+    CALL spi_send_byte
+    LOAD s0, 36
+    CALL spi_send_byte
+    LOAD s0, 00
+    CALL spi_send_byte
+    LOAD s0, 00
+    CALL spi_send_byte
+    RETURN
+
+send_9:
+    LOAD s0, 00
+    CALL spi_send_byte
+    LOAD s0, 06
+    CALL spi_send_byte
+    LOAD s0, 09
+    CALL spi_send_byte
+    LOAD s0, 49
+    CALL spi_send_byte
+    LOAD s0, 29
+    CALL spi_send_byte
+    LOAD s0, 1E
+    CALL spi_send_byte
+    LOAD s0, 00
+    CALL spi_send_byte
+    LOAD s0, 00
+    CALL spi_send_byte
+    RETURN
+
+; ==================== OLED Control ====================
+
+set_page_col:
+    LOAD s1, CTRL_CMD
+    OUTPUT s1, PORT_CTRL
+    STORE s1, 0E
+    LOAD s1, s0
+    ADD s1, B0
+    LOAD s0, s1
+    CALL spi_send_byte
+    LOAD s0, s7
+    AND s0, 0F
+    CALL spi_send_byte
+    LOAD s0, s7
+    SR0 s0
+    SR0 s0
+    SR0 s0
+    SR0 s0
+    OR s0, 10
+    CALL spi_send_byte
+    RETURN
+
+; ==================== SPI Send Byte ====================
+spi_send_byte:
+    OUTPUT s0, PORT_SPI_DATA
+    FETCH s1, 0E
+    OR s1, CTRL_SPI_EN
+    OUTPUT s1, PORT_CTRL
+spi_wait:
+    INPUT s1, PORT_STATUS
+    TEST s1, 01
+    JUMP Z, spi_wait
+    FETCH s1, 0E
+    OUTPUT s1, PORT_CTRL
+spi_wait2:
+    INPUT s1, PORT_STATUS
+    TEST s1, 01
+    JUMP NZ, spi_wait2
+    RETURN
+
+; ==================== Delay ====================
+short_delay:
+    LOAD s0, 40
+sd_outer:
+    LOAD s1, 20
+sd_inner:
+    SUB s1, 01
+    JUMP NZ, sd_inner
+    SUB s0, 01
+    JUMP NZ, sd_outer
+    RETURN

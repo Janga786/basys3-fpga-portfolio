@@ -1,0 +1,53 @@
+# ---- Vivado / Xilinx ----------------------------------------------------
+*.jou
+*.log
+*.str
+*.pb
+*.wdb
+*.wcfg
+*.dcp
+*.runs/
+*.cache/
+*.hw/
+*.ip_user_files/
+*.gen/
+*.sim/
+.Xil/
+xsim.dir/
+*.os
+*.os.bak
+fsm_encoding.os
+
+# ---- Vivado project files (keep XPR? typically no) ----------------------
+*.xpr
+*.bit          # large; built artefacts shouldn't go in git
+*.ltx
+
+# ---- Vim swap files (gvim used in this course) -------------------------
+*.swp
+*.swo
+*~
+
+# ---- macOS / Windows / Linux -------------------------------------------
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+Thumbs.db
+
+# ---- PicoBlaze build artefacts -----------------------------------------
+*.fmt
+*.hex
+*.psm.log
+KCPSM6_session_log.txt
+prog.log
+btn_rom.log
+task2.log
+task3.log
+
+# ---- Editors / IDEs ----------------------------------------------------
+.idea/
+.vscode/
+
+# ---- Project-specific --------------------------------------------------
+.claude/

@@ -1,0 +1,307 @@
+;=========================================================
+; Section 3: Square circuit - HEX display on 7-seg
+; Modified for Basys 3 (KCPSM6)
+;=========================================================
+; This version always displays the a^2+b^2 result in HEX
+; on the 7-segment displays. No switch selection needed.
+;
+; Operation:
+;   - Press UP button to store switch value alternately as a/b
+;   - Press CENTER button to clear
+;   - 7-seg always shows a^2+b^2 in hex (4 digits + carry dp)
+;   - LEDs[15:0] show the 16-bit binary result
+;
+; Display: [carry_dp] [hex3] [hex2] [hex1] [hex0]
+;   e.g., a=0F, b=0F: 0F*0F + 0F*0F = E1 + E1 = 01C2
+;         7-seg shows: 0 1 C 2  (with dp off = no carry)
+;   e.g., a=FF, b=FF: FF*FF + FF*FF = FE01 + FE01 = 1FC02
+;         7-seg shows: F C 0 2  (leftmost dp ON = carry)
+;=========================================================
+
+;=========================================================
+; Data ram address alias
+;=========================================================
+constant a_lsb, 00
+constant b_lsb, 02
+constant aa_lsb, 04
+constant aa_msb, 05
+constant bb_lsb, 06
+constant bb_msb, 07
+constant aabb_lsb, 08
+constant aabb_msb, 09
+constant aabb_cout, 0A
+constant led0, 10
+constant led1, 11
+constant led2, 12
+constant led3, 13
+
+;=========================================================
+; Register alias
+;=========================================================
+namereg s0, data       ;reg for temporary data
+namereg s1, addr       ;reg for temporary mem & i/o port addr
+namereg s2, i          ;general-purpose loop index
+namereg sf, switch_a_b ;ram offset for current switch input
+
+;=========================================================
+; Port alias
+;=========================================================
+constant rd_flag_port, 00
+constant sw_port, 01
+constant sseg0_port, 00
+constant sseg1_port, 01
+constant sseg2_port, 02
+constant sseg3_port, 03
+constant led_lo_port, 04
+constant led_hi_port, 05
+
+;=========================================================
+; Main program
+;=========================================================
+   call init
+forever:
+   call proc_btn
+   call square
+   call load_hex_display   ;always show a^2+b^2 in hex
+   call disp_led
+   call disp_led_bar
+   jump forever
+
+;=========================================================
+;routine: init
+;=========================================================
+init:
+   load i, 40
+   load data, 00
+clr_mem_loop:
+   store data, (i)
+   sub i, 01
+   jump nz, clr_mem_loop
+   load switch_a_b, 00
+   output data, led_lo_port
+   output data, led_hi_port
+   return
+
+;=========================================================
+;routine: proc_btn
+;=========================================================
+proc_btn:
+   input s3, rd_flag_port
+   test s3, 01
+   jump z, chk_btns
+   call init
+   jump proc_btn_done
+chk_btns:
+   test s3, 02
+   jump z, proc_btn_done
+   input data, sw_port
+   load addr, a_lsb
+   add addr, switch_a_b
+   store data, (addr)
+   xor switch_a_b, 02
+proc_btn_done:
+   return
+
+;=========================================================
+;routine: load_hex_display
+;  function: always load a^2+b^2 hex result to display
+;            Shows 4 hex digits on 7-seg with carry on dp
+;=========================================================
+load_hex_display:
+   ;process aabb_lsb lower nibble -> digit 0
+   fetch data, aabb_lsb
+   call get_lower_nibble
+   call hex_to_led
+   store data, led0
+
+   ;process aabb_lsb upper nibble -> digit 1
+   fetch data, aabb_lsb
+   call get_upper_nibble
+   call hex_to_led
+   store data, led1
+
+   ;process aabb_msb lower nibble -> digit 2
+   fetch data, aabb_msb
+   call get_lower_nibble
+   call hex_to_led
+   store data, led2
+
+   ;process aabb_msb upper nibble -> digit 3
+   fetch data, aabb_msb
+   call get_upper_nibble
+   call hex_to_led
+   ;check carry bit for dp on leftmost digit
+   fetch s6, aabb_cout
+   test s6, 01             ;carry=1?
+   jump z, hex_disp_done   ;no carry
+   and data, 7F            ;yes, turn on dp (active low)
+hex_disp_done:
+   store data, led3
+   return
+
+;=========================================================
+;routine: disp_led
+;=========================================================
+disp_led:
+   fetch data, led0
+   output data, sseg0_port
+   fetch data, led1
+   output data, sseg1_port
+   fetch data, led2
+   output data, sseg2_port
+   fetch data, led3
+   output data, sseg3_port
+   return
+
+;=========================================================
+;routine: disp_led_bar (Section 2)
+;=========================================================
+disp_led_bar:
+   fetch data, aabb_lsb
+   output data, led_lo_port
+   fetch data, aabb_msb
+   output data, led_hi_port
+   return
+
+;=========================================================
+;routine: hex_to_led
+;  Basys 3 format: {dp, g, f, e, d, c, b, a} (active low)
+;=========================================================
+hex_to_led:
+   compare data, 00
+   jump nz, comp_hex_1
+   load data, C0          ;0
+   jump hex_done
+comp_hex_1:
+   compare data, 01
+   jump nz, comp_hex_2
+   load data, F9          ;1
+   jump hex_done
+comp_hex_2:
+   compare data, 02
+   jump nz, comp_hex_3
+   load data, A4          ;2
+   jump hex_done
+comp_hex_3:
+   compare data, 03
+   jump nz, comp_hex_4
+   load data, B0          ;3
+   jump hex_done
+comp_hex_4:
+   compare data, 04
+   jump nz, comp_hex_5
+   load data, 99          ;4
+   jump hex_done
+comp_hex_5:
+   compare data, 05
+   jump nz, comp_hex_6
+   load data, 92          ;5
+   jump hex_done
+comp_hex_6:
+   compare data, 06
+   jump nz, comp_hex_7
+   load data, 82          ;6
+   jump hex_done
+comp_hex_7:
+   compare data, 07
+   jump nz, comp_hex_8
+   load data, F8          ;7
+   jump hex_done
+comp_hex_8:
+   compare data, 08
+   jump nz, comp_hex_9
+   load data, 80          ;8
+   jump hex_done
+comp_hex_9:
+   compare data, 09
+   jump nz, comp_hex_a
+   load data, 90          ;9
+   jump hex_done
+comp_hex_a:
+   compare data, 0A
+   jump nz, comp_hex_b
+   load data, 88          ;A
+   jump hex_done
+comp_hex_b:
+   compare data, 0B
+   jump nz, comp_hex_c
+   load data, 83          ;b
+   jump hex_done
+comp_hex_c:
+   compare data, 0C
+   jump nz, comp_hex_d
+   load data, C6          ;C
+   jump hex_done
+comp_hex_d:
+   compare data, 0D
+   jump nz, comp_hex_e
+   load data, A1          ;d
+   jump hex_done
+comp_hex_e:
+   compare data, 0E
+   jump nz, comp_hex_f
+   load data, 86          ;E
+   jump hex_done
+comp_hex_f:
+   load data, 8E          ;F
+hex_done:
+   return
+
+;=========================================================
+;routine: get_lower_nibble
+;=========================================================
+get_lower_nibble:
+   and data, 0F
+   return
+
+;=========================================================
+;routine: get_upper_nibble
+;=========================================================
+get_upper_nibble:
+   sr0 data
+   sr0 data
+   sr0 data
+   sr0 data
+   return
+
+;=========================================================
+;routine: square
+;=========================================================
+square:
+   fetch s3, a_lsb
+   fetch s4, a_lsb
+   call mult_soft
+   store s6, aa_lsb
+   store s5, aa_msb
+   fetch s3, b_lsb
+   fetch s4, b_lsb
+   call mult_soft
+   store s6, bb_lsb
+   store s5, bb_msb
+   fetch data, aa_lsb
+   add data, s6
+   store data, aabb_lsb
+   fetch data, aa_msb
+   addcy data, s5
+   store data, aabb_msb
+   load data, 00
+   addcy data, 00
+   store data, aabb_cout
+   return
+
+;=========================================================
+;routine: mult_soft
+;=========================================================
+mult_soft:
+   load s5, 00
+   load i, 08
+mult_loop:
+   sr0  s4
+   jump nc, shift_prod
+   add s5, s3
+shift_prod:
+   sra s5
+   sra s6
+   sub i, 01
+   jump nz, mult_loop
+   return

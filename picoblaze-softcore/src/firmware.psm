@@ -1,0 +1,48 @@
+; Read XADC output and display binary on LEDs
+; Port Map:
+;   Input  0x00 = XADC data high byte (bits 15:8)
+;   Input  0x01 = XADC data low byte (bits 7:0)
+;   Output 0x00 = LED[7:0]
+;   Output 0x01 = LED[15:8]
+
+; Register usage:
+;   s0 = XADC high byte
+;   s1 = XADC low byte
+;   s2 = delay counter low
+;   s3 = delay counter high
+
+CONSTANT PORT_XADC_HIGH, 00
+CONSTANT PORT_XADC_LOW, 01
+CONSTANT PORT_LED_LOW, 00
+CONSTANT PORT_LED_HIGH, 01
+
+; ==================== Main Loop ====================
+main:
+    ; Read XADC high byte
+    INPUT s0, PORT_XADC_HIGH
+    ; Read XADC low byte
+    INPUT s1, PORT_XADC_LOW
+
+    ; Output to LEDs
+    ; LED[15:8] = XADC bits 15:8
+    ; LED[7:0]  = XADC bits 7:0
+    OUTPUT s0, PORT_LED_HIGH
+    OUTPUT s1, PORT_LED_LOW
+
+    ; Small delay loop
+    CALL delay
+
+    JUMP main
+
+; ==================== Delay Subroutine ====================
+; ~10ms delay at 100MHz
+delay:
+    LOAD s2, FF
+delay_outer:
+    LOAD s3, FF
+delay_inner:
+    SUB s3, 01
+    JUMP NZ, delay_inner
+    SUB s2, 01
+    JUMP NZ, delay_outer
+    RETURN

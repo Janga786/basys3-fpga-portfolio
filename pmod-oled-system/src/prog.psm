@@ -1,0 +1,44 @@
+; ---------------------------------------------------------
+; PicoBlaze Button Toggle + Counter Program
+; ---------------------------------------------------------
+CONSTANT led_port, 00      ; Address 00
+CONSTANT seg_port, 01      ; Address 01 (New)
+CONSTANT led_state, 10     ; Scratchpad for LED
+CONSTANT press_count, 11   ; Scratchpad for Counter
+
+ADDRESS 000
+start:
+    LOAD s0, 00
+    STORE s0, led_state     ; LED starts OFF
+    STORE s0, press_count   ; Counter starts at 0
+    OUTPUT s0, led_port
+    OUTPUT s0, seg_port     ; Display '0'
+    ENABLE INTERRUPT
+
+main_loop:
+    JUMP main_loop
+
+; ---------------------------------------------------------
+; Interrupt Service Routine (ISR)
+; ---------------------------------------------------------
+isr_routine:
+    ; 1. Handle LED Toggle
+    FETCH s0, led_state
+    XOR s0, 01              ; Flip LED bit
+    STORE s0, led_state
+    OUTPUT s0, led_port
+
+    ; 2. Handle Counter
+    FETCH s1, press_count
+    ADD s1, 01              ; Increment press counter
+    AND s1, 0F              ; Reset to 0 after 15 (hex F)
+    STORE s1, press_count
+    OUTPUT s1, seg_port     ; Send counter to decoder
+
+    RETURNI ENABLE
+
+; ---------------------------------------------------------
+; Interrupt Vector
+; ---------------------------------------------------------
+ADDRESS 3FF
+    JUMP isr_routine
