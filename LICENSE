@@ -20,8 +20,14 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-The PicoBlaze soft-core CPU files (kcpsm6.v, kcpsm6_design_template.v,
-ROM_form.v) included in the picoblaze-softcore/ and pmod-oled-system/
-projects are © 2010 Xilinx Inc. and are redistributed under the terms of
-the original Xilinx PicoBlaze Free License — see the header comments in
-those files.
+The following files carry Xilinx, Inc. copyright headers. They are not
+covered by the MIT License above; their own header terms apply:
+
+  picoblaze-softcore/src/kcpsm6.v
+  picoblaze-softcore/src/kcpsm6_design_template.v
+  picoblaze-softcore/src/ROM_form.v
+  picoblaze-softcore/src/top.v        (assembler-generated program ROM)
+  pmod-oled-system/src/kcpsm6_design_template.v
+  pmod-oled-system/src/ROM_form.v
+  pmod-oled-system/src/top.v          (assembler-generated program ROM)
+  pmod-oled-system/src/btn_rom.v      (assembler-generated program ROM)
