@@ -1,8 +1,8 @@
 # Basys 3 Pinout Reference
 
 Consolidated pinout for the on-board peripherals used by the projects
-in this repository.  The full master XDC is also reproduced as a
-ready-to-paste block at the bottom.
+in this repository.  Digilent's full master XDC is on the Basys 3
+reference pages.
 
 ## Clock
 
@@ -80,8 +80,8 @@ Each PMOD is a 2×6 0.1″ header.  Top row is `JA[1..4]`, bottom row is
 | -------- | ------- | ------- |
 | Channel 6  | `J3`  | `K3`  |
 | Channel 7  | `M2`  | `M1`  |
-| Channel 14 | `N2`  | `N1`  |
-| Channel 15 | `L3`  | `M3`  |
+| Channel 14 | `L3`  | `M3`  |
+| Channel 15 | `N2`  | `N1`  |
 
 ## USB-UART (FT2232)
 
